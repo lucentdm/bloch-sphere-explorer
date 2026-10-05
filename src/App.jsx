@@ -104,12 +104,12 @@ function AxisLabels({ camera, groupRef, renderer }) {
             left: p.x, top: p.y,
             transform: 'translate(-50%, -50%)',
             color: p.color,
-            fontSize: '0.85em',
+            fontSize: '1.25em',
             fontWeight: 'bold',
             fontFamily: "'Courier New', monospace",
             textShadow: `0 0 8px ${p.color}, 0 0 16px ${p.color}`,
-            background: 'rgba(5,5,20,0.7)',
-            padding: '2px 6px',
+            background: 'rgba(5,5,20,0.9)',
+            padding: '4px 8px',
             borderRadius: 4,
             border: `1px solid ${p.color}44`,
             letterSpacing: '0.05em',
@@ -182,8 +182,25 @@ export default function BlochSphere() {
     scene.add(group);
 
     // Sphere
-    const sphereMat = new THREE.MeshPhongMaterial({color:0x0a0a2a,transparent:true,opacity:0.55,emissive:0x0a0a2a,specular:0x4488ff,shininess:80});
+    const sphereMat = new THREE.MeshPhongMaterial({
+      color: 0x0a2a33,
+      emissive: 0x06181c,
+      // color: 0x14144a,
+      // emissive: 0x080820,
+      transparent: true,
+      opacity: 0.65,
+      specular: 0x66aaff,
+      shininess: 100
+    });
+    // Old, darker coloring
+    //const sphereMat = new THREE.MeshPhongMaterial({color:0x0a0a2a,transparent:true,opacity:0.5,emissive:0x0a0a2a,specular:0x4488ff,shininess:80});
     group.add(new THREE.Mesh(new THREE.SphereGeometry(1,48,48), sphereMat));
+
+    // Adding another light to brighten it up a bit
+    scene.add(new THREE.AmbientLight(0x334466, 3));
+    const fill = new THREE.DirectionalLight(0x6688ff, 1.2);
+    fill.position.set(2, 3, 4);
+    scene.add(fill);
 
     // Wireframe circles
     [[0x00f0ff,false,true],[0xcc44ff,true,false],[0x00f0ff,false,false]].forEach(([color,xz,xy],idx)=>{
@@ -196,7 +213,7 @@ export default function BlochSphere() {
         else pts.push(0,Math.cos(a),Math.sin(a));
       }
       geo.setAttribute('position', new THREE.Float32BufferAttribute(pts,3));
-      group.add(new THREE.Line(geo, new THREE.LineBasicMaterial({color,transparent:true,opacity:0.35})));
+      group.add(new THREE.Line(geo, new THREE.LineBasicMaterial({color,transparent:true,opacity:0.6})));
     });
 
     // Axis lines (thin dashed-look via segments)
@@ -207,7 +224,7 @@ export default function BlochSphere() {
     ];
     axisLines.forEach(({from,to,color})=>{
       const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...from),new THREE.Vector3(...to)]);
-      group.add(new THREE.Line(geo, new THREE.LineBasicMaterial({color,transparent:true,opacity:0.6})));
+      group.add(new THREE.Line(geo, new THREE.LineBasicMaterial({color,transparent:true,opacity:0.85})));
     });
 
     // Bloch vector arrow
@@ -216,9 +233,9 @@ export default function BlochSphere() {
     arrowRef.current = arrowGroup;
 
     const shaftMat = new THREE.MeshPhongMaterial({color:0xffee00,emissive:0xffaa00,emissiveIntensity:1.5});
-    const shaftGeo = new THREE.CylinderGeometry(0.025,0.025,0.85,12); shaftGeo.translate(0,0.425,0);
+    const shaftGeo = new THREE.CylinderGeometry(0.04,0.04,0.85,16); shaftGeo.translate(0,0.425,0);
     arrowGroup.add(new THREE.Mesh(shaftGeo, shaftMat));
-    const headGeo = new THREE.ConeGeometry(0.07,0.15,12); headGeo.translate(0,0.925,0);
+    const headGeo = new THREE.ConeGeometry(0.09,0.18,16); headGeo.translate(0,0.925,0);
     arrowGroup.add(new THREE.Mesh(headGeo, shaftMat));
     const glowGeo = new THREE.SphereGeometry(0.07,12,12); glowGeo.translate(0,1,0);
     arrowGroup.add(new THREE.Mesh(glowGeo, new THREE.MeshPhongMaterial({color:0xffff00,emissive:0xffff00,emissiveIntensity:3,transparent:true,opacity:0.8})));
@@ -356,7 +373,7 @@ export default function BlochSphere() {
     if (!m || m.some(r=>r.some(c=>c===null))) return;
     setOps(prev => [...prev, {name: customName||'U', matrix:m}]);
   };
-  const removeOp = idx => { setOps(prev=>prev.filter((_,i)=>i!==idx)); setStep(s=>Math.min(s,ops.length-2)); };
+  const removeOp = idx => { setOps(prev=>prev.filter((_,i)=>i!==idx)); setStep(s => Math.max(0, Math.min(s, ops.length - 1))); };
 
   const theta = Math.acos(Math.max(-1,Math.min(1, stateInfo.alpha.r**2+stateInfo.alpha.i**2-stateInfo.beta.r**2-stateInfo.beta.i**2)));
   const phi = Math.atan2(stateInfo.beta.i*stateInfo.alpha.r-stateInfo.beta.r*stateInfo.alpha.i,
@@ -394,7 +411,7 @@ export default function BlochSphere() {
           <div style={{position:'absolute',top:8,left:8,fontSize:'0.62em',color:'#4466aa',pointerEvents:'none'}}>drag to rotate · scroll or +/− to zoom</div>
 
           {/* State display */}
-          <div style={{position:'absolute',bottom:8,left:8,background:'rgba(5,5,20,0.85)',border:'1px solid #1a0a5a',borderRadius:6,padding:'6px 10px',fontSize:'0.68em',lineHeight:1.7}}>
+          <div style={{position:'absolute',bottom:8,left:8,background:'rgba(5,5,20,0.85)',border:'1px solid #1a0a5a',borderRadius:6,padding:'8px 12px',fontSize:'0.9em',lineHeight:1.7}}>
             <div style={{color:'#cc44ff',fontWeight:'bold',letterSpacing:'0.1em',marginBottom:2}}>CURRENT STATE</div>
             <div>|ψ⟩ = <span style={{color:'#00f0ff'}}>{fmtC(stateInfo.alpha)}</span>|0⟩ + <span style={{color:'#ff44cc'}}>{fmtC(stateInfo.beta)}</span>|1⟩</div>
             <div>θ = <span style={{color:'#ffee00'}}>{(theta*180/Math.PI).toFixed(1)}°</span>  φ = <span style={{color:'#ffee00'}}>{(phi*180/Math.PI).toFixed(1)}°</span></div>
