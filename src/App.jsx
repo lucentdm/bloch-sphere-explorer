@@ -33,12 +33,62 @@ function stateToBloch(alpha, beta) {
 }
 
 function slerpBloch(v1, v2, t) {
-  const dot = Math.min(1, Math.max(-1, v1.x*v2.x+v1.y*v2.y+v1.z*v2.z));
+  const dot = Math.min(1, Math.max(-1,
+    v1.x*v2.x + v1.y*v2.y + v1.z*v2.z
+  ));
+
+  // Special case to deal with antipodal singularity for 180 degree rotations
+  // Same direction
+  if (dot > 0.999999) return v2;
+
+  // Opposite directions: choose a stable great-circle path
+  if (dot < -0.999999) {
+    let ortho;
+
+    // Pick an axis that isn't parallel to v1
+    if (Math.abs(v1.x) < 0.9) {
+      ortho = {
+        x: 0,
+        y: v1.z,
+        z: -v1.y
+      };
+    } else {
+      ortho = {
+        x: -v1.z,
+        y: 0,
+        z: v1.x
+      };
+    }
+
+    const len = Math.sqrt(
+      ortho.x**2 + ortho.y**2 + ortho.z**2
+    );
+
+    ortho.x /= len;
+    ortho.y /= len;
+    ortho.z /= len;
+
+    const angle = Math.PI * t;
+
+    return {
+      x: Math.cos(angle)*v1.x + Math.sin(angle)*ortho.x,
+      y: Math.cos(angle)*v1.y + Math.sin(angle)*ortho.y,
+      z: Math.cos(angle)*v1.z + Math.sin(angle)*ortho.z,
+    };
+  }
+
+  // Normal SLERP
   const omega = Math.acos(dot);
-  if (Math.abs(omega) < 1e-6) return v2;
   const s = Math.sin(omega);
-  const f1 = Math.sin((1-t)*omega)/s, f2 = Math.sin(t*omega)/s;
-  return {x:f1*v1.x+f2*v2.x, y:f1*v1.y+f2*v2.y, z:f1*v1.z+f2*v2.z};
+
+  const f1 = Math.sin((1-t)*omega) / s;
+  const f2 = Math.sin(t*omega) / s;
+
+  return {
+    x: f1*v1.x + f2*v2.x,
+    y: f1*v1.y + f2*v2.y,
+    z: f1*v1.z + f2*v2.z
+  };
 }
 
 function parseMatrix(rows) {
