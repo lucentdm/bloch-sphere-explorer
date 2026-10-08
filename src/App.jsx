@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import * as THREE from "three";
+import "./App.css";
 
 const GATES = {
   I: [[{r:1,i:0},{r:0,i:0}],[{r:0,i:0},{r:1,i:0}]],
@@ -149,12 +150,11 @@ function AxisLabels({ camera, groupRef, renderer }) {
     <div style={{ position:'absolute', inset:0, pointerEvents:'none' }}>
       {positions.map((p, i) => (
         !p.behind && (
-          <div key={i} style={{
+          <div key={i} className="axis-label" style={{
             position:'absolute',
             left: p.x, top: p.y,
             transform: 'translate(-50%, -50%)',
             color: p.color,
-            fontSize: '1.25em',
             fontWeight: 'bold',
             fontFamily: "'Courier New', monospace",
             textShadow: `0 0 8px ${p.color}, 0 0 16px ${p.color}`,
@@ -179,8 +179,8 @@ export default function BlochSphere() {
   const arrowRef = useRef(null);
   const sphereGroupRef = useRef(null);
   const blochPosRef = useRef({x:0,y:0,z:1});
-  const isDragging = useRef(false);
-  const prevMouse = useRef({x:0,y:0});
+  const pointersRef = useRef(new Map());
+  const pinchDistanceRef = useRef(null);
   const zoomRef = useRef(4.5); // camera distance
 
   const [ops, setOps] = useState([{name:"H", matrix: GATES.H.map(r=>r.map(c=>({...c})))}]);
@@ -214,7 +214,7 @@ export default function BlochSphere() {
 
     const renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
     renderer.setSize(w, h);
-    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     mountRef.current.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
@@ -309,35 +309,89 @@ export default function BlochSphere() {
     const animate = () => { raf=requestAnimationFrame(animate); renderer.render(scene,camera); };
     animate();
 
-    const onResize = () => {
+    const resizeRenderer = () => {
       if (!mountRef.current) return;
-      const w2=mountRef.current.clientWidth, h2=mountRef.current.clientHeight;
-      renderer.setSize(w2,h2); camera.aspect=w2/h2; camera.updateProjectionMatrix();
+      const w2 = mountRef.current.clientWidth;
+      const h2 = mountRef.current.clientHeight;
+      if (!w2 || !h2) return;
+      renderer.setSize(w2, h2, false);
+      camera.aspect = w2 / h2;
+      camera.updateProjectionMatrix();
     };
-    window.addEventListener('resize', onResize);
+
+    const resizeObserver = new ResizeObserver(resizeRenderer);
+    resizeObserver.observe(mountRef.current);
+    resizeRenderer();
     setRendererReady(true);
 
     return () => {
       cancelAnimationFrame(raf);
-      window.removeEventListener('resize', onResize);
+      resizeObserver.disconnect();
       if (mountRef.current && renderer.domElement.parentNode===mountRef.current)
         mountRef.current.removeChild(renderer.domElement);
       renderer.dispose();
     };
   }, []);
 
-  // Mouse drag + scroll zoom
+  // Pointer controls: mouse drag / one-finger rotate, wheel / two-finger pinch zoom
   useEffect(() => {
     const el = mountRef.current;
-    const onDown = e => { isDragging.current=true; prevMouse.current={x:e.clientX,y:e.clientY}; };
-    const onUp = () => { isDragging.current=false; };
-    const onMove = e => {
-      if (!isDragging.current||!sphereGroupRef.current) return;
-      const dx=e.clientX-prevMouse.current.x, dy=e.clientY-prevMouse.current.y;
-      prevMouse.current={x:e.clientX,y:e.clientY};
-      sphereGroupRef.current.rotation.y += dx*0.01;
-      sphereGroupRef.current.rotation.x += dy*0.01;
+    if (!el) return;
+
+    const pointers = pointersRef.current;
+
+    const pointerDistance = () => {
+      const pts = [...pointers.values()];
+      if (pts.length < 2) return null;
+      return Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
     };
+
+    const onPointerDown = e => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      e.preventDefault();
+      el.setPointerCapture?.(e.pointerId);
+      pointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
+      pinchDistanceRef.current = pointers.size === 2 ? pointerDistance() : null;
+    };
+
+    const onPointerMove = e => {
+      const prev = pointers.get(e.pointerId);
+      if (!prev) return;
+
+      const current = {x:e.clientX, y:e.clientY};
+      pointers.set(e.pointerId, current);
+
+      if (pointers.size === 1) {
+        const group = sphereGroupRef.current;
+        if (!group) return;
+        const dx = current.x - prev.x;
+        const dy = current.y - prev.y;
+        group.rotation.y += dx * 0.01;
+        group.rotation.x += dy * 0.01;
+        return;
+      }
+
+      if (pointers.size === 2) {
+        const dist = pointerDistance();
+        const prevDist = pinchDistanceRef.current;
+        const cam = cameraRef.current;
+        if (dist && prevDist && cam) {
+          // Fingers apart -> camera closer; fingers together -> camera farther away.
+          const currentDist = cam.position.length();
+          const newDist = Math.min(9, Math.max(1.5, currentDist * (prevDist / dist)));
+          cam.position.setLength(newDist);
+          zoomRef.current = newDist;
+        }
+        pinchDistanceRef.current = dist;
+      }
+    };
+
+    const onPointerUp = e => {
+      pointers.delete(e.pointerId);
+      if (pointers.size < 2) pinchDistanceRef.current = null;
+      try { el.releasePointerCapture?.(e.pointerId); } catch { /* already released */ }
+    };
+
     const onWheel = e => {
       e.preventDefault();
       const cam = cameraRef.current;
@@ -347,15 +401,20 @@ export default function BlochSphere() {
       cam.position.setLength(newDist);
       zoomRef.current = newDist;
     };
-    el.addEventListener('mousedown', onDown);
-    el.addEventListener('wheel', onWheel, { passive: false });
-    window.addEventListener('mouseup', onUp);
-    window.addEventListener('mousemove', onMove);
+
+    el.addEventListener('pointerdown', onPointerDown, {passive:false});
+    el.addEventListener('pointermove', onPointerMove, {passive:false});
+    el.addEventListener('pointerup', onPointerUp);
+    el.addEventListener('pointercancel', onPointerUp);
+    el.addEventListener('wheel', onWheel, {passive:false});
+
     return () => {
-      el.removeEventListener('mousedown', onDown);
+      pointers.clear();
+      el.removeEventListener('pointerdown', onPointerDown);
+      el.removeEventListener('pointermove', onPointerMove);
+      el.removeEventListener('pointerup', onPointerUp);
+      el.removeEventListener('pointercancel', onPointerUp);
       el.removeEventListener('wheel', onWheel);
-      window.removeEventListener('mouseup', onUp);
-      window.removeEventListener('mousemove', onMove);
     };
   }, []);
 
@@ -427,19 +486,19 @@ export default function BlochSphere() {
 
   const theta = Math.acos(Math.max(-1,Math.min(1, stateInfo.alpha.r**2+stateInfo.alpha.i**2-stateInfo.beta.r**2-stateInfo.beta.i**2)));
   const phi = Math.atan2(stateInfo.beta.i*stateInfo.alpha.r-stateInfo.beta.r*stateInfo.alpha.i,
-                         stateInfo.beta.r*stateInfo.alpha.r+stateInfo.beta.i*stateInfo.alpha.i)*2;
+                         stateInfo.beta.r*stateInfo.alpha.r+stateInfo.beta.i*stateInfo.alpha.i);
 
   return (
-    <div style={{background:'#050510',minHeight:'100vh',display:'flex',flexDirection:'column',fontFamily:"'Courier New',monospace",color:'#00f0ff',overflow:'hidden'}}>
-      <div style={{textAlign:'center',padding:'10px 0 4px',background:'linear-gradient(180deg,#0a0a2a,transparent)'}}>
+    <div className="bloch-app" style={{background:'#050510',fontFamily:"'Courier New',monospace",color:'#00f0ff'}}>
+      <div className="app-header" style={{textAlign:'center',padding:'10px 0 4px',background:'linear-gradient(180deg,#0a0a2a,transparent)'}}>
         <div style={{fontSize:'1.3em',fontWeight:'bold',letterSpacing:'0.18em',color:'#cc44ff',textShadow:'0 0 16px #cc44ff,0 0 32px #8800cc'}}>BLOCH SPHERE EXPLORER</div>
         <div style={{fontSize:'0.7em',color:'#4488ff',letterSpacing:'0.12em'}}>QUANTUM STATE VISUALIZER</div>
       </div>
 
-      <div style={{display:'flex',flex:1,gap:'10px',padding:'6px 10px',minHeight:0}}>
+      <div className="explorer-main">
         {/* 3D View */}
-        <div style={{flex:'1 1 0',minWidth:0,position:'relative',borderRadius:'10px',border:'1px solid #1a0a3a',overflow:'hidden',boxShadow:'0 0 30px #0a0a4a'}}>
-          <div ref={mountRef} style={{width:'100%',height:'100%',minHeight:'340px',cursor:'grab'}}/>
+        <div className="viewer-panel" style={{borderRadius:'10px',border:'1px solid #1a0a3a',overflow:'hidden',boxShadow:'0 0 30px #0a0a4a'}}>
+          <div ref={mountRef} className="bloch-mount"/>
 
           {/* Axis labels overlay */}
           {rendererReady && cameraRef.current && rendererRef.current && (
@@ -458,10 +517,10 @@ export default function BlochSphere() {
             ))}
           </div>
 
-          <div style={{position:'absolute',top:8,left:8,fontSize:'0.62em',color:'#4466aa',pointerEvents:'none'}}>drag to rotate · scroll or +/− to zoom</div>
+          <div className="gesture-hint" style={{position:'absolute',top:8,left:8,color:'#4466aa',pointerEvents:'none'}}>drag / 1 finger to rotate · scroll / pinch / +/− to zoom</div>
 
           {/* State display */}
-          <div style={{position:'absolute',bottom:8,left:8,background:'rgba(5,5,20,0.85)',border:'1px solid #1a0a5a',borderRadius:6,padding:'8px 12px',fontSize:'0.9em',lineHeight:1.7}}>
+          <div className="state-display" style={{position:'absolute',bottom:8,left:8,background:'rgba(5,5,20,0.85)',border:'1px solid #1a0a5a',borderRadius:6,lineHeight:1.7}}>
             <div style={{color:'#cc44ff',fontWeight:'bold',letterSpacing:'0.1em',marginBottom:2}}>CURRENT STATE</div>
             <div>|ψ⟩ = <span style={{color:'#00f0ff'}}>{fmtC(stateInfo.alpha)}</span>|0⟩ + <span style={{color:'#ff44cc'}}>{fmtC(stateInfo.beta)}</span>|1⟩</div>
             <div>θ = <span style={{color:'#ffee00'}}>{(theta*180/Math.PI).toFixed(1)}°</span>  φ = <span style={{color:'#ffee00'}}>{(phi*180/Math.PI).toFixed(1)}°</span></div>
@@ -470,7 +529,7 @@ export default function BlochSphere() {
         </div>
 
         {/* Control panel */}
-        <div style={{width:'240px',display:'flex',flexDirection:'column',gap:'8px',overflowY:'auto'}}>
+        <div className="control-panel">
           {/* Preset gates */}
           <div style={{background:'rgba(10,10,40,0.9)',border:'1px solid #1a0a5a',borderRadius:8,padding:'10px'}}>
             <div style={{color:'#cc44ff',fontWeight:'bold',fontSize:'0.75em',letterSpacing:'0.12em',marginBottom:8}}>⚡ PRESET GATES</div>
